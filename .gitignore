@@ -1,0 +1,29 @@
+# Environment files
+.env
+
+# Node modules
+node_modules/
+
+# Secrets directory
+secrets/
+
+# Temporary files
+*.log
+*.tmp
+.DS_Store
+
+# Coverage reports
+coverage/
+
+# Build artifacts
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
