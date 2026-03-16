@@ -4,7 +4,16 @@
 
 set -euo pipefail
 
-OPENROUTER_API_KEY="REDACTED_OPENROUTER_KEY"
+# Load from environment or .env file - never hardcode secrets
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    if [ -f "$HOME/wikijs/.env" ]; then
+        OPENROUTER_API_KEY=$(grep '^OPENROUTER_API_KEY=' "$HOME/wikijs/.env" | cut -d'=' -f2-)
+    fi
+fi
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    echo "ERROR: OPENROUTER_API_KEY not set. Export it or add it to $HOME/wikijs/.env"
+    exit 1
+fi
 EMBEDDING_MODEL="openai/text-embedding-3-small"
 WIKI_DIR="$HOME/wikijs"
 
