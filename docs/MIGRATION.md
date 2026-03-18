@@ -1,247 +1,153 @@
 # Migration Guide: agent-infra to wikijs-infra
 
-This guide helps you migrate from an existing Wiki.js deployment in agent-infra to the new dedicated wikijs-infra repository.
+This guide covers migrating from an existing Wiki.js deployment in agent-infra to the dedicated wikijs-infra repository.
 
 ## Overview
 
-The wikijs-infra repository is a standalone, focused repository for Wiki.js infrastructure. It contains:
-- MCP server source code
-- Deployment scripts
-- Documentation
-- Testing infrastructure
+The wikijs-infra repository is a standalone repository for Wiki.js infrastructure. The service has been converted from an MCP (Model Context Protocol) server to a REST API gateway — clients now use plain HTTP/JSON endpoints with API key authentication instead of the MCP protocol over stdio.
+
+Key changes from agent-infra:
+- Transport: MCP over stdio → REST API over HTTP (Express)
+- Authentication: None / Cloudflare Zero Trust → API key Bearer tokens (two-tier: RO/RW)
+- Network: Wiki.js port 3000 exposed → only gateway port 3001 exposed
+- Container name: `wikijs-mcp` → `wikijs-gateway`
 
 ## Prerequisites
 
 - Existing Wiki.js deployment from agent-infra
-- Access to the OCI instance running Wiki.js
-- SSH access to the remote host (if applicable)
+- SSH access to the OCI instance
 - Podman installed on target system
 
 ## Migration Steps
 
-### 1. Export Existing Wiki.js Data
-
-Before migrating, export your existing Wiki.js content:
+### 1. Export Existing Data
 
 ```bash
-# Connect to your OCI instance
 ssh -i ~/.ssh/oci_agent_coder opc@<instance-ip>
 
 # Export Wiki.js database
 podman exec wikijs-postgres pg_dump -U wiki -d wiki > ~/wiki-backup.sql
 
-# Verify backup
-ls -lh ~/wiki-backup.sql
+# Export embeddings
+podman exec wikijs-postgres pg_dump -U wiki -d wiki -t wiki_embeddings | gzip > ~/embeddings-backup.sql.gz
 ```
 
-### 2. Backup Existing Embeddings
-
-Export the vector embeddings from your current deployment:
+### 2. Stop Existing Deployment
 
 ```bash
-# From agent-infra repository
-cd agent-infra/services/wiki-mcp-server
-./backup-embeddings.sh --remote-host <instance-ip> --output ~/embeddings-backup.sql.gz
-
-# Or on the remote host directly
-ssh -i ~/.ssh/oci_agent_coder opc@<instance-ip>
-podman exec wikijs-postgres pg_dump -U wiki -d wiki -t wiki_embeddings | gzip > ~/embeddings-backup-$(date +%Y%m%d-%H%M%S).sql.gz
-```
-
-### 3. Stop Existing Deployment
-
-Stop the old deployment from agent-infra:
-
-```bash
-# From agent-infra repository
-cd agent-infra
+# From agent-infra
 ./scripts/deploy-wikijs.sh stop
-
-# Or destroy completely (preserves volumes)
 ./scripts/deploy-wikijs.sh destroy
 ```
 
-### 4. Clone wikijs-infra Repository
+### 3. Clone and Configure wikijs-infra
 
 ```bash
 git clone <wikijs-infra-repo-url>
 cd wikijs-infra
-```
-
-### 5. Configure Environment
-
-Copy and configure your environment variables:
-
-```bash
 cp .env.example .env
-nano .env
+# Edit .env with your values
 ```
 
-Set the same values you used in agent-infra:
-- `OPENROUTER_API_KEY` - Your OpenRouter API key
-- `WIKI_ADMIN_EMAIL` - Same admin email
-- `WIKI_ADMIN_PASSWORD` - Same admin password
-- `EMBEDDING_MODEL` - Same embedding model
-- Other configuration as needed
-
-### 6. Deploy New Stack
-
-Deploy using the wikijs-infra scripts:
+### 4. Deploy New Stack
 
 ```bash
-# Load environment
 source .env
-
-# Deploy to remote host
-OPENROUTER_API_KEY=$OPENROUTER_API_KEY ./scripts/deploy-wikijs.sh deploy
+API_KEY_RO=my-read-key \
+OPENROUTER_API_KEY=$OPENROUTER_API_KEY \
+./scripts/deploy-wikijs.sh deploy
 ```
 
-### 7. Restore Wiki.js Data
-
-Restore your exported Wiki.js content:
+### 5. Restore Data
 
 ```bash
-# Copy backup to remote host
 scp -i ~/.ssh/oci_agent_coder ~/wiki-backup.sql opc@<instance-ip>:~/
-
-# Restore on remote host
 ssh -i ~/.ssh/oci_agent_coder opc@<instance-ip>
 podman exec -i wikijs-postgres psql -U wiki -d wiki < ~/wiki-backup.sql
 ```
 
-### 8. Restore Embeddings
-
-Restore the vector embeddings:
+### 6. Restore Embeddings
 
 ```bash
-# Copy embeddings backup to remote host
 scp -i ~/.ssh/oci_agent_coder ~/embeddings-backup.sql.gz opc@<instance-ip>:~/
-
-# Restore on remote host
 ssh -i ~/.ssh/oci_agent_coder opc@<instance-ip>
 gunzip -c ~/embeddings-backup.sql.gz | podman exec -i wikijs-postgres psql -U wiki -d wiki
 ```
 
-### 9. Verify Migration
-
-Run the smoke test to verify everything works:
+### 7. Verify
 
 ```bash
-# From wikijs-infra repository
+# Health check
+curl http://<instance-ip>:3001/health
+
+# Test authenticated access
+curl -H "Authorization: Bearer $API_KEY_RO" http://<instance-ip>:3001/api/pages
+
+# Run smoke test
 ./scripts/smoke-test-wikijs.sh <instance-ip>
 ```
 
-Check that:
-- Wiki.js UI is accessible at `http://<instance-ip>:3000`
-- MCP server is accessible at `http://<instance-ip>:3001`
-- Search functionality works
-- All your pages are present
+## Client Migration
 
-### 10. Update MCP Client Configuration
+Clients that previously used the MCP protocol need to switch to HTTP/JSON:
 
-If you're using the MCP server with Kiro or Claude, update your client configuration to point to the new deployment. The configuration format remains the same:
-
+**Before (MCP client):**
 ```json
 {
   "mcpServers": {
     "wiki": {
       "command": "node",
-      "args": ["/path/to/wikijs-infra/services/wiki-mcp-server/src/client.js"],
-      "env": {
-        "WIKI_BASE_URL": "http://<instance-ip>:3000",
-        "OPENROUTER_API_KEY": "sk-or-v1-...",
-        "PGHOST": "<instance-ip>",
-        "PGPORT": "5432",
-        "PGDATABASE": "wiki",
-        "PGUSER": "wiki",
-        "PGPASSWORD": "your-password"
-      }
+      "args": ["src/index.js"],
+      "env": { "PGHOST": "...", "OPENROUTER_API_KEY": "..." }
     }
   }
 }
 ```
 
+**After (HTTP client):**
+```bash
+# Search
+curl -X POST -H "Authorization: Bearer $API_KEY_RO" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "search term", "top_k": 5}' \
+  http://localhost:3001/api/search
+
+# Get page
+curl -H "Authorization: Bearer $API_KEY_RO" http://localhost:3001/api/pages/42
+```
+
+No special SDK or protocol is needed — any HTTP client works.
+
 ## Backward Compatibility
 
-The wikijs-infra repository maintains full backward compatibility with agent-infra:
+The underlying data is fully compatible:
+- Same database schema (`wiki_embeddings` table)
+- Same embedding model (OpenRouter text-embedding-3-small)
+- Same Wiki.js GraphQL API usage internally
 
-- Same MCP server API
-- Same deployment script commands
-- Same environment variable names
-- Same container names and ports
-- Same database schema
+What changed:
+- Client-facing protocol (MCP → REST)
+- Authentication mechanism (none → API keys)
+- Container name (`wikijs-mcp` → `wikijs-gateway`)
+- Port exposure (3000+3001 → 3001 only)
 
-Your existing MCP client configurations will work without modification (just update paths if needed).
-
-## Troubleshooting
-
-### Embeddings Not Restored
-
-If embeddings aren't working after restore:
-
-```bash
-# Verify embeddings table exists
-ssh -i ~/.ssh/oci_agent_coder opc@<instance-ip>
-podman exec wikijs-postgres psql -U wiki -d wiki -c "SELECT COUNT(*) FROM wiki_embeddings;"
-
-# Re-run sync pipeline manually
-podman restart wikijs-mcp
-podman logs -f wikijs-mcp
-```
-
-### MCP Server Connection Issues
-
-Check MCP server logs:
-
-```bash
-./scripts/deploy-wikijs.sh logs wikijs-mcp
-```
-
-Verify environment variables:
-
-```bash
-podman exec wikijs-mcp env | grep -E '(OPENROUTER|PGHOST|WIKI_BASE)'
-```
-
-### Database Connection Errors
-
-Verify PostgreSQL is running:
-
-```bash
-./scripts/deploy-wikijs.sh status
-podman exec wikijs-postgres pg_isready -U wiki
-```
-
-## Rollback Procedure
+## Rollback
 
 If you need to rollback to agent-infra:
 
-1. Stop wikijs-infra deployment:
-   ```bash
-   cd wikijs-infra
-   ./scripts/deploy-wikijs.sh destroy
-   ```
+```bash
+cd wikijs-infra
+./scripts/deploy-wikijs.sh destroy
 
-2. Redeploy from agent-infra:
-   ```bash
-   cd agent-infra
-   ./scripts/deploy-wikijs.sh deploy
-   ```
+cd agent-infra
+./scripts/deploy-wikijs.sh deploy
+```
 
-3. Restore your backups if needed
-
-## Post-Migration Cleanup
-
-After successful migration and verification:
-
-1. Remove old deployment artifacts from agent-infra (optional)
-2. Update documentation references
-3. Update CI/CD pipelines if applicable
-4. Archive agent-infra backups
+Restore backups if needed.
 
 ## Support
 
-For issues or questions:
-- Check the [DEPLOYMENT.md](DEPLOYMENT.md) guide
-- Review [TESTING.md](TESTING.md) for testing procedures
-- Check [API.md](API.md) for MCP server API reference
+- [API Reference](API.md)
+- [Deployment Guide](DEPLOYMENT.md)
+- [Testing Guide](TESTING.md)
+- [Client Configuration](CLIENT_CONFIG.md)

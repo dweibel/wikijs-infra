@@ -92,7 +92,7 @@ describe('syncPages — new page detected', () => {
 
     await syncPages(dbClient, BASE_URL);
 
-    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, 1);
+    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, 1, null);
     expect(chunkText).toHaveBeenCalledWith(content.content);
     expect(generateEmbeddings).toHaveBeenCalledWith(['chunk A', 'chunk B']);
     expect(upsertEmbeddings).toHaveBeenCalledWith(
@@ -133,7 +133,7 @@ describe('syncPages — updated page detected', () => {
 
     await syncPages(dbClient, BASE_URL);
 
-    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, 5);
+    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, 5, null);
     expect(upsertEmbeddings).toHaveBeenCalledTimes(1);
   });
 });
@@ -351,7 +351,7 @@ describe('syncPages — write operations integration', () => {
     await syncPages(dbClient, BASE_URL);
 
     // Verify the new page was processed
-    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, newPageId);
+    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, newPageId, null);
     expect(upsertEmbeddings).toHaveBeenCalledWith(
       dbClient,
       newPageId,
@@ -383,7 +383,7 @@ describe('syncPages — write operations integration', () => {
     await syncPages(dbClient, BASE_URL);
 
     // Verify embeddings were regenerated
-    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, pageId);
+    expect(getPageContent).toHaveBeenCalledWith(BASE_URL, pageId, null);
     expect(chunkText).toHaveBeenCalledWith('Updated content from write tool');
     expect(upsertEmbeddings).toHaveBeenCalledTimes(1);
   });

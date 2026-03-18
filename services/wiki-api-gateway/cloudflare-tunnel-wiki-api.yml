@@ -1,0 +1,13 @@
+# Cloudflare Tunnel configuration for Wiki REST API Gateway
+# This is a template — replace <tunnel-id> and hostname with your values.
+# Routes a single hostname to the REST API gateway on port 3001.
+# The gateway handles all routing internally; no path-specific rules needed.
+# Wiki.js (3000) and PostgreSQL (5432) are NOT exposed through this tunnel.
+
+tunnel: <tunnel-id>
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: wiki-api.yourdomain.com
+    service: http://localhost:3001
+  - service: http_status:404

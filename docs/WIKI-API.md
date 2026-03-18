@@ -742,37 +742,40 @@ Common error codes and solutions:
 3. Implement exponential backoff for retries
 4. Monitor response times and adjust accordingly
 
-## Integration with MCP Server
+## Integration with REST API Gateway
 
-The Wiki MCP Server uses this GraphQL API for:
+The Wiki REST API Gateway uses this GraphQL API internally for all operations:
 
-- **Sync Pipeline**: `pages.list` to detect new/updated pages
+- **Sync Pipeline**: `pages.list` to detect new/updated pages for embedding generation
 - **Content Retrieval**: `pages.single` and `pages.singleByPath` for full content
-- **Write Operations** (when `ENABLE_WRITE_OPERATIONS=true`):
-  - `create_wiki_page` tool → `pages.create` mutation
-  - `update_wiki_page` tool → `pages.update` mutation
-  - `delete_wiki_page` tool → `pages.delete` mutation
-  - `move_wiki_page` tool → `pages.move` mutation
+- **Write Operations** (when `API_KEY_RW` is configured):
+  - `POST /api/pages` → `pages.create` mutation
+  - `PUT /api/pages/:id` → `pages.update` mutation
+  - `DELETE /api/pages/:id` → `pages.delete` mutation
+  - `POST /api/pages/:id/move` → `pages.move` mutation
 
-See [API.md](./API.md) for MCP server tool documentation.
+External clients do not interact with the GraphQL API directly — they use the REST API gateway on port 3001. The GraphQL API on port 3000 is pod-internal only.
+
+See [API.md](./API.md) for REST API endpoint documentation.
 
 ## Additional Resources
 
 - [Wiki.js Official Documentation](https://docs.requarks.io/)
-- [GraphQL Playground](http://localhost:3000/graphql) (when Wiki.js is running)
+- [GraphQL Playground](http://localhost:3000/graphql) (accessible within the pod or on the host — not exposed externally)
 - [GraphQL Specification](https://graphql.org/learn/)
 - [Wiki.js GitHub Repository](https://github.com/requarks/wiki)
+- [REST API Gateway Reference](./API.md) — the client-facing API that wraps this GraphQL API
 
 ## Testing the API
 
-Use the smoke test script to verify API functionality:
+The GraphQL API is used internally by the gateway and the smoke test script:
 
 ```bash
 # Obtain admin token
 eval $(./scripts/deploy-wikijs.sh get-token)
 
-# Run smoke test (creates, searches, and deletes a test page)
+# Run smoke test (creates test page via GraphQL, verifies gateway search, cleans up)
 ./scripts/smoke-test-wikijs.sh <instance-ip>
 ```
 
-See [TESTING.md](./TESTING.md) for comprehensive testing guide.
+For day-to-day usage, interact with the REST API gateway instead of GraphQL directly. See [TESTING.md](./TESTING.md) for the full testing guide.

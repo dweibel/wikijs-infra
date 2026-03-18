@@ -1,778 +1,455 @@
-# Wiki MCP Server API Documentation
+# Wiki REST API Gateway — API Reference
 
 ## Overview
 
-The Wiki MCP Server provides semantic vector search capabilities over Wiki.js content through the Model Context Protocol (MCP). It exposes tools for searching and retrieving wiki pages using natural language queries.
+The Wiki REST API Gateway provides HTTP/JSON endpoints for Wiki.js page CRUD and semantic vector search. It replaces the former MCP (Model Context Protocol) server with plain REST endpoints, authenticated via a two-tier API key system.
 
-**Version:** 1.0.0  
-**Protocol:** MCP (Model Context Protocol) over stdio  
-**Transport:** Standard input/output (stdio)
+**Base URL:** `http://localhost:3001` (or via Cloudflare tunnel)
+**Protocol:** HTTP/JSON
+**Authentication:** Bearer API key in `Authorization` header
 
 ## Architecture
 
 ```mermaid
-graph LR
-    Client[MCP Client] --> Server[Wiki MCP Server]
-    Server --> DB[(PostgreSQL + pgvector)]
-    Server --> Wiki[Wiki.js GraphQL API]
-    Server --> Bedrock[AWS Bedrock Titan Embeddings]
-    
-    Wiki -.Sync Pipeline.-> Server
-    Server -.Generate Embeddings.-> Bedrock
-    Bedrock -.Vector.-> DB
+graph TD
+    ExtClient["External Client"] -->|"HTTPS"| CF["Cloudflare Tunnel"]
+    CF -->|"http://localhost:3001"| GW["REST API Gateway :3001"]
+    LocalClient["Local Containers"] -->|"http://host:3001"| GW
+    GW -->|"GET /health"| Health["Health Check (no auth)"]
+    GW -->|"Read endpoints"| ReadRoutes["Read Routes (RO or RW key)"]
+    GW -->|"Write endpoints"| WriteRoutes["Write Routes (RW key only)"]
+    ReadRoutes -->|"tools.js"| WikiGQL["Wiki.js GraphQL :3000 (pod-internal)"]
+    ReadRoutes -->|"tools.js"| DB["PostgreSQL + pgvector :5432 (pod-internal)"]
+    WriteRoutes -->|"tools.js"| WikiGQL
+    GW -->|"Background"| Sync["Sync Pipeline"]
+    Sync --> WikiGQL
+    Sync -->|"embeddings.js"| OpenRouter["OpenRouter API"]
+    Sync --> DB
 ```
 
-## Features
+## Authentication
 
-- **Semantic Search**: Natural language search using vector embeddings
-- **Page Retrieval**: Fetch full page content by ID or path
-- **Background Sync**: Automatic embedding generation for new/updated pages
-- **Chunked Content**: Large pages split into searchable chunks
-- **Relevance Scoring**: Cosine similarity scoring for search results
+All endpoints except `GET /health` require a Bearer API key:
 
-## Tools
+```
+Authorization: Bearer <API_KEY>
+```
 
-### 1. search_wiki
+Two access tiers are supported:
 
-Performs semantic vector search over wiki content using natural language queries.
+| Tier | Key Variable | Access |
+|------|-------------|--------|
+| Read-only | `API_KEY_RO` | GET endpoints + POST /api/search |
+| Read-write | `API_KEY_RW` | All endpoints including mutations |
+
+Keys are compared using `crypto.timingSafeEqual` to prevent timing attacks.
+
+**Missing/invalid key:** `401 {"error": "Unauthorized"}`
+**RO key on write endpoint:** `403 {"error": "Forbidden: read-only key cannot access write endpoints"}`
+
+## Endpoint Summary
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | None | Health check |
+| GET | `/api/pages` | RO/RW | List all pages |
+| GET | `/api/pages/by-path?path=...` | RO/RW | Get page by path |
+| GET | `/api/pages/:id` | RO/RW | Get page by ID |
+| POST | `/api/search` | RO/RW | Semantic vector search |
+| POST | `/api/pages` | RW only | Create page |
+| PUT | `/api/pages/:id` | RW only | Update page |
+| DELETE | `/api/pages/:id` | RW only | Delete page |
+| POST | `/api/pages/:id/move` | RW only | Move/rename page |
+
+---
+
+## Read Endpoints
+
+### GET /health
+
+Health check — no authentication required.
+
+**Response:** `200`
+```json
+{"status": "ok"}
+```
+
+### GET /api/pages
+
+List all wiki pages, ordered by most recently updated.
+
+**Response:** `200`
+```json
+[
+  {
+    "id": 1,
+    "path": "/home",
+    "title": "Home",
+    "updatedAt": "2026-03-10T14:30:00Z"
+  }
+]
+```
+
+### GET /api/pages/:id
+
+Get a page by its numeric ID.
 
 **Parameters:**
+- `:id` — positive integer (path parameter)
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `query` | string | Yes | - | Natural language search query |
-| `top_k` | number | No | 5 | Number of results to return (1-20) |
-
-**Request Example:**
-
+**Response:** `200`
 ```json
 {
-  "method": "tools/call",
-  "params": {
-    "name": "search_wiki",
-    "arguments": {
-      "query": "How do I configure authentication?",
-      "top_k": 5
-    }
+  "id": 42,
+  "title": "Authentication Setup",
+  "path": "/admin/authentication",
+  "content": "# Authentication Setup\n...",
+  "updatedAt": "2026-03-10T14:30:00Z"
+}
+```
+
+**Errors:**
+- `400` — `:id` is not a valid positive integer
+- `404` — page not found
+
+### GET /api/pages/by-path?path=...
+
+Get a page by its path.
+
+**Query Parameters:**
+- `path` — page path string (required)
+
+**Response:** `200`
+```json
+{
+  "id": 42,
+  "title": "Authentication Setup",
+  "path": "/admin/authentication",
+  "content": "# Authentication Setup\n...",
+  "updatedAt": "2026-03-10T14:30:00Z"
+}
+```
+
+**Errors:**
+- `400` — `path` query parameter missing or empty
+- `404` — page not found at given path
+
+### POST /api/search
+
+Semantic vector search over wiki content using OpenRouter embeddings.
+
+**Request Body:**
+```json
+{
+  "query": "how to configure authentication",
+  "top_k": 5
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `query` | string | Yes | — | Natural language search query |
+| `top_k` | number | No | 5 | Results to return (1–20) |
+
+**Response:** `200`
+```json
+[
+  {
+    "page_id": 42,
+    "page_title": "Authentication Setup",
+    "page_path": "/admin/authentication",
+    "chunk_text": "To configure authentication, navigate to...",
+    "relevance_score": 0.87
   }
-}
+]
 ```
 
-**Response Schema:**
+**Errors:**
+- `400` — `query` missing or empty
+- `502` — embedding generation or database query failed
 
-```typescript
-Array<{
-  page_id: number;
-  page_title: string;
-  page_path: string;
-  chunk_text: string;
-  relevance_score: number;
-}>
-```
+---
 
-**Response Example (Success):**
+## Write Endpoints
 
+Write endpoints require a read-write API key (`API_KEY_RW`). The gateway uses a Wiki.js admin JWT token (`WIKI_ADMIN_TOKEN`) internally to execute GraphQL mutations.
+
+### POST /api/pages
+
+Create a new wiki page.
+
+**Request Body:**
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "[{\"page_id\":42,\"page_title\":\"Authentication Setup\",\"page_path\":\"/admin/auth\",\"chunk_text\":\"To configure authentication, navigate to the Admin panel...\",\"relevance_score\":0.89},{\"page_id\":15,\"page_title\":\"User Management\",\"page_path\":\"/admin/users\",\"chunk_text\":\"Authentication providers can be configured...\",\"relevance_score\":0.76}]"
-    }
-  ]
+  "title": "Getting Started",
+  "path": "/getting-started",
+  "content": "# Getting Started\n\nWelcome...",
+  "description": "Intro guide",
+  "tags": ["tutorial"],
+  "isPublished": true,
+  "isPrivate": false,
+  "locale": "en"
 }
 ```
 
-**Response Example (Error):**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `title` | string | Yes | — | Page title |
+| `path` | string | Yes | — | Page path |
+| `content` | string | Yes | — | Markdown content |
+| `description` | string | No | `""` | Page description |
+| `tags` | string[] | No | `[]` | Tag strings |
+| `isPublished` | boolean | No | `true` | Published status |
+| `isPrivate` | boolean | No | `false` | Private status |
+| `locale` | string | No | `"en"` | Page locale |
 
+**Response:** `201`
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"error\":\"Search failed: Connection to database timed out\"}"
-    }
-  ]
+  "page_id": 43,
+  "path": "/getting-started",
+  "title": "Getting Started",
+  "success": true,
+  "message": "Page created successfully"
 }
 ```
 
-**Behavior:**
+**Errors:**
+- `400` — missing required fields (`title`, `path`, `content`)
+- `409` — page already exists at the given path
 
-- Empty query returns empty array `[]`
-- Results ordered by relevance score (highest first)
-- Relevance score range: 0.0 to 1.0
-- Returns chunks from multiple pages if relevant
-- Multiple chunks from same page may appear in results
+### PUT /api/pages/:id
 
-### 2. get_wiki_page
+Update an existing page. Only provided fields are updated (partial update).
 
-Retrieves full page content by page ID or path.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page_id` | number | No* | Wiki page ID |
-| `path` | string | No* | Wiki page path (e.g., `/home`, `/admin/users`) |
-
-*At least one parameter must be provided. If both provided, `page_id` takes precedence.
-
-**Request Example (by ID):**
-
+**Request Body:**
 ```json
 {
-  "method": "tools/call",
-  "params": {
-    "name": "get_wiki_page",
-    "arguments": {
-      "page_id": 42
-    }
-  }
+  "content": "# Updated content...",
+  "tags": ["tutorial", "updated"]
 }
 ```
 
-**Request Example (by path):**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | string | No | New content |
+| `title` | string | No | New title |
+| `description` | string | No | New description |
+| `tags` | string[] | No | New tags |
+| `isPublished` | boolean | No | Published status |
+| `isPrivate` | boolean | No | Private status |
 
+**Response:** `200`
 ```json
 {
-  "method": "tools/call",
-  "params": {
-    "name": "get_wiki_page",
-    "arguments": {
-      "path": "/admin/authentication"
-    }
-  }
+  "page_id": 43,
+  "updated_at": "2026-03-12T10:30:00Z",
+  "success": true,
+  "message": "Page updated successfully"
 }
 ```
 
-**Response Schema:**
+**Errors:**
+- `400` — `:id` is not a valid positive integer
+- `404` — page not found
 
-```typescript
-{
-  page_id: number;
-  title: string;
-  path: string;
-  content: string;        // Full markdown content
-  updated_at: string;     // ISO 8601 timestamp
-}
-```
+### DELETE /api/pages/:id
 
-**Response Example (Success):**
+Delete a page permanently.
 
+**Response:** `200`
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"page_id\":42,\"title\":\"Authentication Setup\",\"path\":\"/admin/auth\",\"content\":\"# Authentication Setup\\n\\nThis guide covers...\\n\",\"updated_at\":\"2026-03-10T14:30:00Z\"}"
-    }
-  ]
+  "page_id": 43,
+  "success": true,
+  "message": "Page deleted successfully"
 }
 ```
 
-**Response Example (Error):**
+**Errors:**
+- `400` — `:id` is not a valid positive integer
+- `404` — page not found
 
+### POST /api/pages/:id/move
+
+Move a page to a new path.
+
+**Request Body:**
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"error\":\"Failed to retrieve page: Page not found: /invalid/path\"}"
-    }
-  ]
+  "destination_path": "/guides/getting-started",
+  "destination_locale": "en"
 }
 ```
 
-**Behavior:**
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `destination_path` | string | Yes | — | New page path |
+| `destination_locale` | string | No | `"en"` | Destination locale |
 
-- Returns full markdown content (not chunked)
-- Path matching is case-sensitive
-- Locale defaults to `en` for path-based lookups
-- Returns error if page doesn't exist
-
-## Error Handling
-
-All tools return errors as JSON objects with an `error` field rather than throwing exceptions.
-
-**Error Response Format:**
-
+**Response:** `200`
 ```json
 {
-  "error": "Descriptive error message"
+  "page_id": 43,
+  "old_path": "/getting-started",
+  "new_path": "/guides/getting-started",
+  "success": true,
+  "message": "Page moved successfully"
 }
 ```
 
-**Common Error Scenarios:**
+**Errors:**
+- `400` — `:id` invalid or `destination_path` missing
+- `404` — source page not found
 
-| Error | Cause | Resolution |
-|-------|-------|------------|
-| `Search failed: Connection to database timed out` | Database unavailable | Check PostgreSQL container status |
-| `Failed to retrieve page: Page not found: <path>` | Invalid page path/ID | Verify page exists in Wiki.js |
-| `Search failed: Bedrock API error` | AWS credentials or quota issue | Check AWS credentials and Bedrock access |
-| `Either page_id or path must be provided` | Missing required parameters | Provide at least one parameter |
+---
 
-## Configuration
+## Error Responses
 
-The MCP server is configured via environment variables:
+All errors return JSON with an `error` field:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PGHOST` | Yes | `localhost` | PostgreSQL host |
-| `PGPORT` | No | `5432` | PostgreSQL port |
-| `PGDATABASE` | Yes | `wiki` | PostgreSQL database name |
-| `PGUSER` | Yes | `wiki` | PostgreSQL username |
-| `PGPASSWORD` | Yes | - | PostgreSQL password |
-| `WIKI_BASE_URL` | Yes | `http://localhost:3000` | Wiki.js base URL |
-| `SYNC_INTERVAL_MS` | No | `300000` | Embedding sync interval (5 minutes) |
-| `AWS_REGION` | Yes | `us-east-1` | AWS region for Bedrock |
-| `AWS_DEFAULT_REGION` | Yes | `us-east-1` | AWS default region |
+```json
+{"error": "Descriptive error message"}
+```
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 400 | Bad request (invalid parameters or missing required fields) |
+| 401 | Unauthorized (missing or invalid API key) |
+| 403 | Forbidden (read-only key on write endpoint) |
+| 404 | Not found (page doesn't exist) |
+| 409 | Conflict (page already exists at path) |
+| 500 | Internal server error (unhandled exception) |
+| 502 | Bad gateway (upstream embedding or database failure) |
+
+---
 
 ## Background Sync Pipeline
 
-The server runs a background process that:
+The gateway runs a background process that keeps embeddings in sync with Wiki.js content:
 
-1. Polls Wiki.js GraphQL API every 5 minutes (configurable)
+1. Polls Wiki.js GraphQL API every 5 minutes (configurable via `SYNC_INTERVAL_MS`)
 2. Detects new, updated, or deleted pages
 3. Chunks page content into searchable segments
-4. Generates embeddings using AWS Bedrock Titan Embeddings v2
+4. Generates embeddings using OpenRouter (text-embedding-3-small, 1536 dimensions)
 5. Upserts embeddings into PostgreSQL with pgvector
 
-**Sync Behavior:**
+New or updated pages appear in search results within one sync cycle.
 
-- Only processes pages modified since last sync
-- Deletes embeddings for deleted pages
-- Updates embeddings for modified pages
-- Chunks large pages (max 512 tokens per chunk)
-- Runs continuously in background
+---
 
-## Database Schema
-
-The server uses PostgreSQL with pgvector extension:
-
-```sql
-CREATE TABLE IF NOT EXISTS page_embeddings (
-  id SERIAL PRIMARY KEY,
-  page_id INTEGER NOT NULL,
-  page_title TEXT NOT NULL,
-  page_path TEXT NOT NULL,
-  chunk_index INTEGER NOT NULL,
-  chunk_text TEXT NOT NULL,
-  embedding vector(1024) NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(page_id, chunk_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_embeddings_vector 
-  ON page_embeddings USING ivfflat (embedding vector_cosine_ops);
-```
-
-## Performance Considerations
-
-**Search Performance:**
-
-- Vector search uses IVFFlat index for fast similarity search
-- Typical query time: 10-50ms for databases with <10,000 chunks
-- Performance degrades with >100,000 chunks (consider tuning)
-
-**Embedding Generation:**
-
-- Bedrock Titan Embeddings v2: ~100ms per chunk
-- Sync pipeline processes pages sequentially
-- Large wikis (>1000 pages) may take 10-20 minutes for initial sync
-
-**Resource Usage:**
-
-- Memory: ~100MB base + ~1KB per embedded chunk
-- CPU: Minimal (I/O bound)
-- Network: Bedrock API calls during sync
-
-## Security Considerations
-
-1. **No Authentication**: MCP server has no built-in auth
-   - Deploy behind Cloudflare tunnel with Zero Trust
-   - Use service tokens for machine-to-machine access
-   - Restrict network access via firewall rules
-
-2. **Database Access**: Server has full read access to Wiki.js database
-   - Use read-only database credentials if possible
-   - Isolate in private network
-
-3. **AWS Credentials**: Requires Bedrock access
-   - Use IAM roles with minimal permissions
-   - Only grant `bedrock:InvokeModel` for Titan Embeddings
-
-## Deployment
-
-The server is deployed as a Docker container in a Podman pod alongside Wiki.js:
-
-```bash
-# Deploy the full stack
-./scripts/deploy-wikijs.sh deploy
-
-# Check MCP server logs
-podman logs wikijs-mcp
-
-# Restart MCP server
-podman restart wikijs-mcp
-```
-
-**Container Details:**
-
-- Image: `wikijs-mcp-server:latest`
-- Platform: `linux/arm64`
-- Port: `3001` (exposed on host)
-- Network: Shares pod network with Wiki.js and PostgreSQL
-
-## Testing
-
-See [TESTING.md](./TESTING.md) for comprehensive testing guide including:
-
-- Unit tests
-- Integration tests (local containers)
-- Smoke tests (live OCI deployment)
-
-## Limitations
-
-1. **Read-Only**: No support for creating/updating/deleting pages
-2. **English Only**: Embedding model optimized for English content
-3. **Locale**: Path-based lookups default to `en` locale
-4. **Chunk Size**: Fixed at 512 tokens (not configurable)
-5. **Sync Delay**: New pages take up to 5 minutes to appear in search
-
-## Future Enhancements
-
-Potential additions to the API:
-
-- `create_wiki_page` - Create new pages
-- `update_wiki_page` - Update existing pages
-- `delete_wiki_page` - Delete pages
-- `move_wiki_page` - Move/rename pages
-- `list_wiki_pages` - List all pages with filters
-- `get_page_tree` - Get hierarchical page structure
-
-See [WIKI-GRAPHQL-API.md](./WIKI-GRAPHQL-API.md) for underlying Wiki.js API capabilities.
-
-## Support
-
-For issues or questions:
-
-1. Check logs: `podman logs wikijs-mcp`
-2. Verify configuration: `podman exec wikijs-mcp env | grep -E 'PG|WIKI|AWS'`
-3. Test database: `podman exec wikijs-postgres psql -U wiki -d wiki -c 'SELECT COUNT(*) FROM page_embeddings;'`
-4. Review [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) (if available)
-
-## References
-
-- [Model Context Protocol Specification](https://modelcontextprotocol.io/)
-- [Wiki.js GraphQL API](./WIKI-GRAPHQL-API.md)
-- [AWS Bedrock Titan Embeddings](https://docs.aws.amazon.com/bedrock/latest/userguide/titan-embedding-models.html)
-- [pgvector Documentation](https://github.com/pgvector/pgvector)
-
-
-## Write Operation Tools
-
-The following tools are available when `ENABLE_WRITE_OPERATIONS=true` and `WIKI_ADMIN_TOKEN` is configured.
-
-### 3. create_wiki_page
-
-Creates a new wiki page with the specified content and metadata.
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `title` | string | Yes | - | Page title |
-| `path` | string | Yes | - | Page path (e.g., `/guides/new-page`) |
-| `content` | string | Yes | - | Page content (markdown) |
-| `description` | string | No | `""` | Page description/summary |
-| `tags` | array | No | `[]` | Array of tag strings |
-| `is_published` | boolean | No | `true` | Whether page is published |
-| `is_private` | boolean | No | `false` | Whether page is private |
-| `locale` | string | No | `"en"` | Page locale |
-| `editor` | string | No | `"markdown"` | Editor type |
-
-**Request Example:**
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "create_wiki_page",
-    "arguments": {
-      "title": "Getting Started Guide",
-      "path": "/guides/getting-started",
-      "content": "# Getting Started\n\nWelcome to our wiki...",
-      "description": "A guide for new users",
-      "tags": ["guide", "tutorial", "beginner"],
-      "is_published": true
-    }
-  }
-}
-```
-
-**Response Schema:**
-
-```typescript
-{
-  page_id: number;
-  path: string;
-  title: string;
-  success: boolean;
-  message: string;
-}
-```
-
-**Response Example (Success):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"page_id\":123,\"path\":\"/guides/getting-started\",\"title\":\"Getting Started Guide\",\"success\":true,\"message\":\"Page created successfully\"}"
-    }
-  ]
-}
-```
-
-**Response Example (Error):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"success\":false,\"message\":\"Page already exists at path: /guides/getting-started\"}"
-    }
-  ]
-}
-```
-
-**Behavior:**
-
-- Path must be unique (returns error if exists)
-- Path must start with `/`
-- Content is stored as markdown
-- Embeddings generated automatically within 5 minutes
-- Returns page_id for future operations
-
-### 4. update_wiki_page
-
-Updates an existing wiki page's content or metadata.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page_id` | number | Yes | Page ID to update |
-| `content` | string | No | New page content (markdown) |
-| `title` | string | No | New page title |
-| `description` | string | No | New page description |
-| `tags` | array | No | New array of tags |
-| `is_published` | boolean | No | Update published status |
-| `is_private` | boolean | No | Update private status |
-
-*At least one optional parameter must be provided.
-
-**Request Example:**
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "update_wiki_page",
-    "arguments": {
-      "page_id": 123,
-      "content": "# Getting Started (Updated)\n\nWelcome to our updated wiki...",
-      "tags": ["guide", "tutorial", "beginner", "updated"]
-    }
-  }
-}
-```
-
-**Response Schema:**
-
-```typescript
-{
-  page_id: number;
-  updated_at: string;  // ISO 8601 timestamp
-  success: boolean;
-  message: string;
-}
-```
-
-**Response Example (Success):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"page_id\":123,\"updated_at\":\"2026-03-12T10:30:00Z\",\"success\":true,\"message\":\"Page updated successfully\"}"
-    }
-  ]
-}
-```
-
-**Response Example (Error):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"success\":false,\"message\":\"Page not found: 999\"}"
-    }
-  ]
-}
-```
-
-**Behavior:**
-
-- Only specified fields are updated (partial updates supported)
-- Embeddings regenerated automatically within 5 minutes
-- Returns updated timestamp
-- Page must exist (returns error if not found)
-
-### 5. delete_wiki_page
-
-Deletes a wiki page and its associated embeddings.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `page_id` | number | Yes | Page ID to delete |
-
-**Request Example:**
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "delete_wiki_page",
-    "arguments": {
-      "page_id": 123
-    }
-  }
-}
-```
-
-**Response Schema:**
-
-```typescript
-{
-  page_id: number;
-  success: boolean;
-  message: string;
-}
-```
-
-**Response Example (Success):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"page_id\":123,\"success\":true,\"message\":\"Page deleted successfully\"}"
-    }
-  ]
-}
-```
-
-**Response Example (Error):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"success\":false,\"message\":\"Page not found: 999\"}"
-    }
-  ]
-}
-```
-
-**Behavior:**
-
-- Permanently deletes page from Wiki.js
-- Embeddings removed automatically within 5 minutes
-- Cannot be undone (no trash/recycle bin)
-- Returns error if page doesn't exist
-
-### 6. move_wiki_page
-
-Moves or renames a wiki page to a new path.
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `page_id` | number | Yes | - | Page ID to move |
-| `destination_path` | string | Yes | - | New page path |
-| `destination_locale` | string | No | `"en"` | Destination locale |
-
-**Request Example:**
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "move_wiki_page",
-    "arguments": {
-      "page_id": 123,
-      "destination_path": "/guides/beginner/getting-started"
-    }
-  }
-}
-```
-
-**Response Schema:**
-
-```typescript
-{
-  page_id: number;
-  old_path: string;
-  new_path: string;
-  success: boolean;
-  message: string;
-}
-```
-
-**Response Example (Success):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"page_id\":123,\"old_path\":\"/guides/getting-started\",\"new_path\":\"/guides/beginner/getting-started\",\"success\":true,\"message\":\"Page moved successfully\"}"
-    }
-  ]
-}
-```
-
-**Response Example (Error):**
-
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"success\":false,\"message\":\"Destination path already exists: /guides/beginner/getting-started\"}"
-    }
-  ]
-}
-```
-
-**Behavior:**
-
-- Moves page to new path
-- Content and metadata preserved
-- Embeddings updated automatically with new path
-- Returns error if destination exists
-- Returns error if source page doesn't exist
-
-## Write Operations Security
-
-**Authentication:**
-- Requires valid Wiki.js admin JWT token
-- Token passed via `WIKI_ADMIN_TOKEN` environment variable
-- Token stored as Podman secret (not plain text)
-
-**Authorization:**
-- All write operations require admin privileges
-- No per-page or per-user permissions (uses Wiki.js admin token)
-- Read operations don't require authentication
-
-**Audit Trail:**
-- All write operations logged in MCP server logs
-- Wiki.js maintains its own audit log
-- Recommend monitoring logs for unauthorized access
-
-**Best Practices:**
-1. Only enable write operations when needed
-2. Use separate deployment for write-enabled instances
-3. Restrict network access to write-enabled servers
-4. Rotate admin tokens regularly (every 90 days)
-5. Monitor logs for suspicious activity
-
-## Updated Configuration
-
-Additional environment variables for write operations:
+## Configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ENABLE_WRITE_OPERATIONS` | No | `false` | Enable write operation tools |
-| `WIKI_ADMIN_TOKEN` | Conditional* | - | Wiki.js admin JWT token |
-| `OPENROUTER_API_KEY` | Yes | - | OpenRouter API key for embeddings |
-| `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model to use |
-| `OPENROUTER_BASE_URL` | No | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
+| `API_KEY_RO` | At least one key | — | Read-only API key |
+| `API_KEY_RW` | At least one key | — | Read-write API key |
+| `WIKI_ADMIN_TOKEN` | If `API_KEY_RW` set | — | Wiki.js admin JWT for write mutations |
+| `OPENROUTER_API_KEY` | Yes | — | OpenRouter API key for embeddings |
+| `EMBEDDING_MODEL` | No | `openai/text-embedding-3-small` | Embedding model |
+| `OPENROUTER_BASE_URL` | No | `https://openrouter.ai/api/v1` | OpenRouter API URL |
+| `GATEWAY_PORT` | No | `3001` | HTTP listen port |
+| `WIKI_BASE_URL` | No | `http://localhost:3000` | Wiki.js GraphQL endpoint (pod-internal) |
+| `PGHOST` | No | `localhost` | PostgreSQL host |
+| `PGPORT` | No | `5432` | PostgreSQL port |
+| `PGDATABASE` | No | `wiki` | PostgreSQL database |
+| `PGUSER` | No | `wiki` | PostgreSQL user |
+| `PGPASSWORD` | No | — | PostgreSQL password |
+| `SYNC_INTERVAL_MS` | No | `300000` | Sync pipeline polling interval (ms) |
 
-*Required when `ENABLE_WRITE_OPERATIONS=true`
+---
 
-## Updated Database Schema
-
-Vector dimensions updated for OpenRouter embeddings:
+## Database Schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS wiki_embeddings (
   id SERIAL PRIMARY KEY,
   page_id INTEGER NOT NULL,
-  page_title TEXT NOT NULL,
   page_path TEXT NOT NULL,
+  page_title TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
   chunk_text TEXT NOT NULL,
-  embedding vector(1536) NOT NULL,  -- Updated from 1024 to 1536
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  embedding vector(1024),
+  updated_at TIMESTAMP DEFAULT NOW(),
   UNIQUE(page_id, chunk_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_embeddings_vector 
-  ON wiki_embeddings USING ivfflat (embedding vector_cosine_ops) 
+CREATE INDEX IF NOT EXISTS idx_embeddings_page_id ON wiki_embeddings(page_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_vector
+  ON wiki_embeddings USING ivfflat (embedding vector_cosine_ops)
   WITH (lists = 100);
 ```
 
-## Updated Limitations
+---
 
-1. **Write Operations**: Optional, disabled by default for security
-2. **English Only**: Embedding model optimized for English content
-3. **Locale**: Path-based lookups default to `en` locale
-4. **Chunk Size**: Fixed at 512 tokens (not configurable)
-5. **Sync Delay**: New/updated pages take up to 5 minutes to appear in search
-6. **No Bulk Operations**: Write operations are single-page only
+## Deployment
 
-## Migration from AWS Bedrock
+The gateway runs as a container in a Podman pod alongside Wiki.js and PostgreSQL:
 
-The server now uses OpenRouter API instead of AWS Bedrock:
-
-**Changes:**
-- Embedding dimensions: 1024 → 1536
-- API provider: AWS Bedrock → OpenRouter
-- Model: Titan Embeddings v2 → text-embedding-3-small
-- Configuration: AWS credentials → OpenRouter API key
-
-**Migration:**
-See [MIGRATION.md](./MIGRATION.md) for detailed migration guide.
-
-## Deployment Modes
-
-**Read-Only Deployment:**
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-... ./scripts/deploy-wikijs.sh deploy
+# Deploy the full stack
+API_KEY_RO=my-key OPENROUTER_API_KEY=sk-or-v1-... ./scripts/deploy-wikijs.sh deploy
+
+# Check gateway logs
+podman logs wikijs-gateway
+
+# Restart gateway
+podman restart wikijs-gateway
 ```
 
-**Read-Write Deployment:**
+Container details:
+- Image: `wikijs-gateway:latest`
+- Platform: `linux/arm64`
+- Port: `3001` (only port exposed from pod)
+- Network: Shares pod network with Wiki.js and PostgreSQL
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full deployment guide.
+
+---
+
+## Usage Examples
+
 ```bash
-# Step 1: Deploy read-only
-OPENROUTER_API_KEY=sk-or-v1-... ./scripts/deploy-wikijs.sh deploy
+# List pages
+curl -H "Authorization: Bearer $API_KEY_RO" http://localhost:3001/api/pages
 
-# Step 2: Get admin token
-eval $(./scripts/deploy-wikijs.sh get-token)
+# Get page by ID
+curl -H "Authorization: Bearer $API_KEY_RO" http://localhost:3001/api/pages/42
 
-# Step 3: Update with write operations
-ENABLE_WRITE_OPERATIONS=true OPENROUTER_API_KEY=sk-or-v1-... ./scripts/deploy-wikijs.sh update
+# Get page by path
+curl -H "Authorization: Bearer $API_KEY_RO" "http://localhost:3001/api/pages/by-path?path=/home"
+
+# Semantic search
+curl -X POST -H "Authorization: Bearer $API_KEY_RO" -H "Content-Type: application/json" \
+  -d '{"query": "how to configure auth", "top_k": 5}' \
+  http://localhost:3001/api/search
+
+# Create page (requires RW key)
+curl -X POST -H "Authorization: Bearer $API_KEY_RW" -H "Content-Type: application/json" \
+  -d '{"title": "New Page", "path": "/new-page", "content": "# Hello"}' \
+  http://localhost:3001/api/pages
+
+# Update page
+curl -X PUT -H "Authorization: Bearer $API_KEY_RW" -H "Content-Type: application/json" \
+  -d '{"content": "# Updated content"}' \
+  http://localhost:3001/api/pages/42
+
+# Delete page
+curl -X DELETE -H "Authorization: Bearer $API_KEY_RW" http://localhost:3001/api/pages/42
+
+# Move page
+curl -X POST -H "Authorization: Bearer $API_KEY_RW" -H "Content-Type: application/json" \
+  -d '{"destination_path": "/new-location"}' \
+  http://localhost:3001/api/pages/42/move
 ```
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete deployment guide.
+---
+
+## References
+
+- [Deployment Guide](./DEPLOYMENT.md)
+- [Testing Guide](./TESTING.md)
+- [Client Configuration](./CLIENT_CONFIG.md)
+- [Wiki.js GraphQL API](./WIKI-GRAPHQL-API.md) — underlying API used by the gateway internally
+- [pgvector Documentation](https://github.com/pgvector/pgvector)
+- [OpenRouter API](https://openrouter.ai/docs)

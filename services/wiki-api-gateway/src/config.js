@@ -1,11 +1,8 @@
 /**
- * Configuration module for Wiki MCP Server.
+ * Configuration module for Wiki REST API Gateway.
  * 
  * Loads and validates environment variables, providing a centralized
  * configuration object for the application.
- * 
- * Feature: wiki-mcp-access-control
- * Task: 2.1 - Environment Variable Configuration
  */
 
 /**
@@ -16,9 +13,13 @@
  */
 export function loadConfig() {
   const config = {
-    // Access Control
-    enableWriteOps: process.env.ENABLE_WRITE_OPERATIONS === 'true',
+    // API Key Authentication
+    apiKeyRo: process.env.API_KEY_RO || null,
+    apiKeyRw: process.env.API_KEY_RW || null,
     wikiAdminToken: process.env.WIKI_ADMIN_TOKEN,
+    
+    // Gateway
+    gatewayPort: Number(process.env.GATEWAY_PORT ?? 3001),
     
     // OpenRouter API (required for embeddings)
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
@@ -50,17 +51,27 @@ export function loadConfig() {
  * @throws {Error} If configuration is invalid
  */
 export function validateConfig(config) {
+  // At least one API key must be configured
+  if (!config.apiKeyRo && !config.apiKeyRw) {
+    throw new Error('At least one of API_KEY_RO or API_KEY_RW must be configured');
+  }
+  
+  // WIKI_ADMIN_TOKEN required when API_KEY_RW is configured
+  if (config.apiKeyRw && !config.wikiAdminToken) {
+    throw new Error('WIKI_ADMIN_TOKEN required when API_KEY_RW is configured');
+  }
+  
   // OPENROUTER_API_KEY is always required (for embeddings)
   if (!config.openrouterApiKey) {
-    throw new Error('OPENROUTER_API_KEY is required for embedding generation');
+    throw new Error('OPENROUTER_API_KEY is required');
   }
   
-  // WIKI_ADMIN_TOKEN required when write operations enabled
-  if (config.enableWriteOps && !config.wikiAdminToken) {
-    throw new Error('WIKI_ADMIN_TOKEN required when ENABLE_WRITE_OPERATIONS=true');
+  // Validate gateway port
+  if (isNaN(config.gatewayPort) || config.gatewayPort < 1 || config.gatewayPort > 65535) {
+    throw new Error(`Invalid GATEWAY_PORT: ${config.gatewayPort}. Must be between 1 and 65535`);
   }
   
-  // Validate port number
+  // Validate database port
   if (isNaN(config.pgPort) || config.pgPort < 1 || config.pgPort > 65535) {
     throw new Error(`Invalid PGPORT: ${config.pgPort}. Must be between 1 and 65535`);
   }
