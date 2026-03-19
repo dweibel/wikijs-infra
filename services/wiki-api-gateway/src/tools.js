@@ -40,9 +40,10 @@ export async function searchWiki(dbClient, wikiBaseUrl, { query, top_k = 5 }) {
  *
  * @param {string} wikiBaseUrl                          - Base URL of the Wiki.js instance
  * @param {{ page_id?: number, path?: string }} args
+ * @param {string} [token]                              - JWT authentication token
  * @returns {Promise<{page_id, title, path, content, updated_at} | {error: string}>}
  */
-export async function getWikiPage(wikiBaseUrl, { page_id, path } = {}) {
+export async function getWikiPage(wikiBaseUrl, { page_id, path } = {}, token = null) {
   if (page_id == null && path == null) {
     return { error: 'Either page_id or path must be provided' };
   }
@@ -50,9 +51,9 @@ export async function getWikiPage(wikiBaseUrl, { page_id, path } = {}) {
   try {
     let page;
     if (page_id != null) {
-      page = await getPageContent(wikiBaseUrl, page_id);
+      page = await getPageContent(wikiBaseUrl, page_id, token);
     } else {
-      page = await getPageByPath(wikiBaseUrl, path);
+      page = await getPageByPath(wikiBaseUrl, path, 'en', token);
     }
 
     return {
@@ -218,7 +219,7 @@ export async function moveWikiPage(wikiBaseUrl, token, { page_id, destination_pa
 
   try {
     // Get old path before moving
-    const oldPage = await getPageContent(wikiBaseUrl, page_id);
+    const oldPage = await getPageContent(wikiBaseUrl, page_id, token);
     const old_path = oldPage.path;
     
     const result = await movePage(wikiBaseUrl, token, page_id, destination_path, destination_locale);

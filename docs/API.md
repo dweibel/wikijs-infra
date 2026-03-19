@@ -450,6 +450,6 @@ curl -X POST -H "Authorization: Bearer $API_KEY_RW" -H "Content-Type: applicatio
 - [Deployment Guide](./DEPLOYMENT.md)
 - [Testing Guide](./TESTING.md)
 - [Client Configuration](./CLIENT_CONFIG.md)
-- [Wiki.js GraphQL API](./WIKI-GRAPHQL-API.md) — underlying API used by the gateway internally
+- [Wiki.js GraphQL API](./WIKI-API.md) — underlying API used by the gateway internally
 - [pgvector Documentation](https://github.com/pgvector/pgvector)
 - [OpenRouter API](https://openrouter.ai/docs)

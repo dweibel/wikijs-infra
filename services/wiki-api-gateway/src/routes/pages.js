@@ -30,7 +30,7 @@ export function createPagesRouter({ config, dbClient }) {
         return res.status(400).json({ error: 'Missing required query parameter: path' });
       }
 
-      const result = await getWikiPage(config.wikiBaseUrl, { path });
+      const result = await getWikiPage(config.wikiBaseUrl, { path }, config.wikiAdminToken);
 
       if (result.error) {
         if (result.error.toLowerCase().includes('not found')) {
@@ -59,7 +59,7 @@ export function createPagesRouter({ config, dbClient }) {
         return res.status(400).json({ error: 'Invalid page ID: must be a positive integer' });
       }
 
-      const result = await getWikiPage(config.wikiBaseUrl, { page_id: parseInt(id, 10) });
+      const result = await getWikiPage(config.wikiBaseUrl, { page_id: parseInt(id, 10) }, config.wikiAdminToken);
 
       if (result.error) {
         if (result.error.toLowerCase().includes('not found')) {

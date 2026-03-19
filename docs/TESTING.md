@@ -11,12 +11,12 @@ Unit tests cover core business logic (chunker, embeddings, db, wiki-client, sync
 ### Prerequisites
 
 - Node.js 20+
-- `npm install` completed in `services/wiki-mcp-server/`
+- `npm install` completed in `services/wiki-api-gateway/`
 
 ### Run
 
 ```bash
-cd services/wiki-mcp-server
+cd services/wiki-api-gateway
 npm test
 # or single run (no watch):
 npm test -- --run
@@ -44,7 +44,7 @@ Property-based tests use `fast-check` to validate correctness properties with ra
 ### Run
 
 ```bash
-cd services/wiki-mcp-server
+cd services/wiki-api-gateway
 npm test -- src/*.property.test.js src/**/*.property.test.js
 ```
 
@@ -63,6 +63,8 @@ npm test -- src/*.property.test.js src/**/*.property.test.js
 | `src/embeddings.property.test.js` | Embedding dimension correctness |
 | `src/index.property.test.js` | Startup configuration validation |
 | `src/health.property.test.js` | Health endpoint properties |
+| `src/deploy.property.test.js` | Deployment configuration properties |
+| `src/json.property.test.js` | JSON utility correctness |
 
 ---
 
@@ -83,7 +85,7 @@ Integration tests spin up a real `pgvector/pgvector:pg16` container via `testcon
 ### Run
 
 ```bash
-cd services/wiki-mcp-server
+cd services/wiki-api-gateway
 npm run test:integration
 ```
 

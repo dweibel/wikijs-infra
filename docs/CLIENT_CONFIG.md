@@ -272,4 +272,4 @@ curl -s -X POST http://localhost:3000/graphql \
 - [API Reference](./API.md) — complete endpoint documentation
 - [Deployment Guide](./DEPLOYMENT.md) — deployment instructions
 - [Testing Guide](./TESTING.md) — testing procedures
-- [Wiki.js GraphQL API](./WIKI-GRAPHQL-API.md) — underlying API reference
+- [Wiki.js GraphQL API](./WIKI-API.md) — underlying API reference
