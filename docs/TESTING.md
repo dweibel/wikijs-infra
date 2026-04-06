@@ -99,6 +99,38 @@ npm run test:integration
 
 ---
 
+---
+
+## wiki-cli Tests
+
+The `wiki-cli` Go tool has its own test suite using Go's standard `testing` package, `testing/quick` for property-based tests, and `net/http/httptest` for HTTP mocking.
+
+### Prerequisites
+
+- Go 1.21+
+
+### Run
+
+```bash
+cd services/wiki-cli
+go test ./...
+```
+
+### Test organization
+
+| Package | What it tests |
+|---------|---------------|
+| `config/config_test.go` | Config loading, env var parsing, URL validation |
+| `client/client_test.go` | HTTP client, retry logic, error handling |
+| `commands/*_test.go` | Per-command argument parsing, request construction, write gate |
+| `main_test.go` | Entry point dispatch, no-args handling, unknown commands |
+
+### Property-based tests
+
+Property tests use `testing/quick` (Go stdlib) and validate 15 correctness properties defined in the design document. They cover config parsing, request construction, write gate enforcement, JSON passthrough, help system content, and error message formatting.
+
+---
+
 ## OCI Smoke Test
 
 The smoke test validates the full end-to-end stack on a live OCI deployment: page creation via Wiki.js GraphQL → sync pipeline indexes page → gateway search returns results → gateway get page returns content → cleanup.

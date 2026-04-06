@@ -9,6 +9,7 @@ Automated deployment of Wiki.js with PostgreSQL (pgvector) and a REST API gatewa
 ## Features
 
 - REST API Gateway with page CRUD and semantic vector search
+- CLI tool (`wiki-cli`) for shell-based gateway access (Go static binary)
 - Two-tier API key authentication (read-only / read-write)
 - Background embedding sync pipeline (OpenRouter text-embedding-3-small)
 - Podman pod deployment with systemd auto-start
@@ -43,6 +44,7 @@ graph TD
 ## Documentation
 
 - [API Reference](docs/API.md) — REST endpoints, request/response schemas
+- [CLI Tool](docs/CLI.md) — `wiki-cli` command reference and usage
 - [Deployment Guide](docs/DEPLOYMENT.md) — Deployment instructions and troubleshooting
 - [Testing Guide](docs/TESTING.md) — Unit, integration, property-based, and smoke tests
 - [Client Configuration](docs/CLIENT_CONFIG.md) — How to connect to the gateway
@@ -72,6 +74,12 @@ wikijs-infra/
 │   │   └── json-utils.js        # JSON response utilities
 │   ├── Dockerfile               # ARM64 container image
 │   └── init-pgvector.sql        # Database schema initialization
+├── services/wiki-cli/           # CLI tool for gateway access
+│   ├── main.go                  # Entry point and command dispatch
+│   ├── Makefile                 # Cross-compilation for linux/arm64
+│   ├── client/client.go         # HTTP gateway client with retry logic
+│   ├── config/config.go         # Environment variable configuration
+│   └── commands/                # Per-command logic (search, get, list, create, update, delete, move, help)
 ├── scripts/
 │   ├── deploy-wikijs.sh         # Deploy/manage the pod
 │   ├── smoke-test-wikijs.sh     # End-to-end smoke test

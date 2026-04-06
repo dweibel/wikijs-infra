@@ -1,0 +1,45 @@
+name: Release wiki-cli
+
+on:
+  push:
+    tags:
+      - "wiki-cli/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/wiki-cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/wiki-cli/go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build linux/arm64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o wiki-cli-linux-arm64 .
+
+      - name: Build linux/amd64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o wiki-cli-linux-amd64 .
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/wiki-cli/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "wiki-cli ${{ steps.version.outputs.version }}"
+          body: "wiki-cli release ${{ steps.version.outputs.version }}"
+          files: |
+            services/wiki-cli/wiki-cli-linux-arm64
+            services/wiki-cli/wiki-cli-linux-amd64

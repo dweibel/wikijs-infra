@@ -18,6 +18,8 @@ coverage/
 # Build artifacts
 dist/
 build/
+services/wiki-cli/wiki-cli
+services/wiki-cli/wiki-cli-*
 
 # IDE files
 .vscode/

@@ -146,6 +146,36 @@ result = requests.post(
 
 The REST API can be called from any AI agent or tool that supports HTTP requests. Unlike the former MCP server, no special protocol or SDK is needed — standard HTTP clients work.
 
+### From Goose (via wiki-cli)
+
+The recommended way to access the wiki from Goose is via the `wiki-cli` tool, which is pre-installed in the Goose container. Goose invokes it as a shell command through its Developer extension, bypassing the stdio MCP transport entirely.
+
+```bash
+# Search
+wiki-cli search "kubernetes deployment"
+
+# Get page
+wiki-cli get --id 42
+wiki-cli get --path "devops/kubernetes"
+
+# List all pages
+wiki-cli list
+
+# Create page (requires ENABLE_WRITE_OPS=true)
+wiki-cli create --title "New Page" --path "guides/new" --content "# Hello"
+
+# Update page
+wiki-cli update --id 42 --content "# Updated"
+
+# Delete page
+wiki-cli delete --id 42
+
+# Move page
+wiki-cli move --id 42 --destination "new/path"
+```
+
+All output is JSON to stdout, errors to stderr. See the [CLI Reference](./CLI.md) for full documentation.
+
 ### From Kiro / IDE Agents
 
 Configure an MCP tool or custom HTTP tool to call the gateway endpoints. Example using a simple fetch wrapper:
@@ -270,6 +300,7 @@ curl -s -X POST http://localhost:3000/graphql \
 ## Additional Resources
 
 - [API Reference](./API.md) — complete endpoint documentation
+- [CLI Reference](./CLI.md) — `wiki-cli` command reference and usage
 - [Deployment Guide](./DEPLOYMENT.md) — deployment instructions
 - [Testing Guide](./TESTING.md) — testing procedures
 - [Wiki.js GraphQL API](./WIKI-API.md) — underlying API reference

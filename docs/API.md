@@ -447,6 +447,7 @@ curl -X POST -H "Authorization: Bearer $API_KEY_RW" -H "Content-Type: applicatio
 
 ## References
 
+- [CLI Reference](./CLI.md) — `wiki-cli` command-line tool
 - [Deployment Guide](./DEPLOYMENT.md)
 - [Testing Guide](./TESTING.md)
 - [Client Configuration](./CLIENT_CONFIG.md)
