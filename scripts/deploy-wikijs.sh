@@ -9,8 +9,8 @@ POD_NAME="wikijs"
 PG_CONTAINER="wikijs-postgres"
 WIKI_CONTAINER="wikijs-app"
 GATEWAY_CONTAINER="wikijs-gateway"
-PG_VOLUME="wikijs-pgdata"
-WIKI_VOLUME="wikijs-assets"
+PG_VOLUME="/mnt/workspace/wikijs/pgdata"
+WIKI_VOLUME="/mnt/workspace/wikijs/assets"
 PG_SECRET="wikijs-pg-password"
 OPENROUTER_SECRET="wikijs-openrouter-key"
 API_KEY_RO_SECRET="wikijs-api-key-ro"
@@ -76,9 +76,10 @@ pull_images() {
 
 # ─── Start containers (shared by deploy and update) ───────────────────────────
 start_containers() {
-  # Create pod with port mappings (only gateway port exposed)
+  # Create pod with port mappings (gateway + wiki.js web UI)
   podman pod create --name "$POD_NAME" \
-    -p "${GATEWAY_PORT}:${GATEWAY_PORT}"
+    -p "${GATEWAY_PORT}:${GATEWAY_PORT}" \
+    -p "3000:3000"
 
   # Start PostgreSQL first
   podman run -d \
@@ -87,7 +88,7 @@ start_containers() {
     --secret "$PG_SECRET",type=env,target=POSTGRES_PASSWORD \
     -e POSTGRES_DB=wiki \
     -e POSTGRES_USER=wiki \
-    -v "${PG_VOLUME}:/var/lib/postgresql/data" \
+    -v "${PG_VOLUME}:/var/lib/postgresql/data:Z" \
     "$PG_IMAGE"
 
   # Wait for PostgreSQL to be ready (max 60s)
@@ -122,7 +123,7 @@ start_containers() {
     -e DB_USER=wiki \
     -e WIKI_ADMIN_EMAIL="${WIKI_ADMIN_EMAIL:-admin@wiki.local}" \
     -e WIKI_ADMIN_PASSWORD="${WIKI_ADMIN_PASSWORD:-ChangeMe123!}" \
-    -v "${WIKI_VOLUME}:/wiki/data" \
+    -v "${WIKI_VOLUME}:/wiki/data:Z" \
     "$WIKI_IMAGE"
 
   # Start REST API Gateway
@@ -214,9 +215,13 @@ cmd_deploy() {
       (podman secret rm "$ADMIN_TOKEN_SECRET" && echo -n "$WIKI_ADMIN_TOKEN" | podman secret create "$ADMIN_TOKEN_SECRET" -)
   fi
 
-  # Create named volumes (idempotent)
-  podman volume create "$PG_VOLUME" 2>/dev/null || true
-  podman volume create "$WIKI_VOLUME" 2>/dev/null || true
+  # Verify bind mount directories exist on block volume
+  if [ ! -d "$PG_VOLUME" ] || [ ! -d "$WIKI_VOLUME" ]; then
+    echo "ERROR: Bind mount directories not found."
+    echo "  Expected: $PG_VOLUME and $WIKI_VOLUME"
+    echo "  Run setup-block-volume.sh first (from oci-infra repo)."
+    exit 1
+  fi
 
   # Create pod and start containers
   start_containers
@@ -305,7 +310,7 @@ cmd_destroy() {
   podman pod stop "$POD_NAME" 2>/dev/null || true
   podman rm "$PG_CONTAINER" "$WIKI_CONTAINER" "$GATEWAY_CONTAINER" 2>/dev/null || true
   podman pod rm "$POD_NAME" 2>/dev/null || true
-  echo "Pod and containers removed. Volumes ($PG_VOLUME, $WIKI_VOLUME) preserved."
+  echo "Pod and containers removed. Data preserved on block volume ($PG_VOLUME, $WIKI_VOLUME)."
 }
 
 cmd_get_token() {

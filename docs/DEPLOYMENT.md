@@ -8,6 +8,7 @@ This guide covers deploying the Wiki REST API Gateway with OpenRouter embeddings
 
 - OCI VM.Standard.A1.Flex instance (ARM64)
 - Podman installed
+- Block volume mounted at `/mnt/workspace` with Wiki.js directories created (run `oci-infra/scripts/setup-block-volume.sh`)
 - OpenRouter API key from https://openrouter.ai/
 - At least one API key (read-only or read-write)
 - Wiki.js admin credentials (for write operations)
@@ -112,7 +113,7 @@ Note: Port 3000 is only accessible from within the pod or on the host itself —
 
 Creates:
 - Podman pod with 3 containers (PostgreSQL, Wiki.js, Gateway)
-- Named volumes for data persistence
+- Bind mounts on block volume for data persistence (`/mnt/workspace/wikijs/pgdata`, `/mnt/workspace/wikijs/assets`)
 - Podman secrets for credentials
 - Systemd unit for auto-start on boot
 
@@ -303,7 +304,12 @@ eval $(./scripts/deploy-wikijs.sh get-token)
 
 ### Backup
 
+Data lives on the block volume at `/mnt/workspace/wikijs/`. Backups are managed by `oci-infra/scripts/backup-wikijs.sh` which runs as a daily cron job, uploading to OCI Object Storage.
+
 ```bash
+# Manual backup (run on instance)
+/home/opc/scripts/backup-wikijs.sh
+
 # Full database backup
 podman exec wikijs-postgres pg_dump -U wiki wiki > wiki_backup_$(date +%Y%m%d).sql
 
@@ -333,7 +339,8 @@ OPENROUTER_API_KEY=sk-or-v1-... \
 
 ```bash
 ./scripts/deploy-wikijs.sh destroy
-# Optionally remove volumes: podman volume rm wikijs-pgdata wikijs-assets
+# Data is preserved on block volume at /mnt/workspace/wikijs/
+# To also remove data: rm -rf /mnt/workspace/wikijs/pgdata/* /mnt/workspace/wikijs/assets/*
 # Redeploy
 API_KEY_RO=my-key OPENROUTER_API_KEY=sk-or-v1-... ./scripts/deploy-wikijs.sh deploy
 ```

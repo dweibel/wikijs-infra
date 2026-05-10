@@ -410,6 +410,9 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full deployment guide.
 ## Usage Examples
 
 ```bash
+# Load API keys from .env first
+set -a && source .env && set +a
+
 # List pages
 curl -H "Authorization: Bearer $API_KEY_RO" http://localhost:3001/api/pages
 

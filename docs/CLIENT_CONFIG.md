@@ -10,6 +10,12 @@ Two access tiers are available:
 
 ## Connecting to the Gateway
 
+Load API keys from `.env` before running any examples:
+
+```bash
+set -a && source .env && set +a
+```
+
 ### Direct Access (same host or network)
 
 ```bash
@@ -151,6 +157,14 @@ The REST API can be called from any AI agent or tool that supports HTTP requests
 The recommended way to access the wiki from Goose is via the `wiki-cli` tool, which is pre-installed in the Goose container. Goose invokes it as a shell command through its Developer extension, bypassing the stdio MCP transport entirely.
 
 ```bash
+# Set required env vars
+export WIKI_GATEWAY_API_KEY=$API_KEY_RO
+export WIKI_GATEWAY_URL=http://localhost:3001
+
+# For write operations, also set:
+# export WIKI_GATEWAY_API_KEY=$API_KEY_RW
+# export ENABLE_WRITE_OPS=true
+
 # Search
 wiki-cli search "kubernetes deployment"
 
@@ -161,7 +175,7 @@ wiki-cli get --path "devops/kubernetes"
 # List all pages
 wiki-cli list
 
-# Create page (requires ENABLE_WRITE_OPS=true)
+# Create page (requires ENABLE_WRITE_OPS=true and RW key)
 wiki-cli create --title "New Page" --path "guides/new" --content "# Hello"
 
 # Update page
@@ -173,6 +187,12 @@ wiki-cli delete --id 42
 # Move page
 wiki-cli move --id 42 --destination "new/path"
 ```
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WIKI_GATEWAY_API_KEY` | Yes | — | API key (RO or RW) |
+| `WIKI_GATEWAY_URL` | No | `http://localhost:3001` | Gateway URL |
+| `ENABLE_WRITE_OPS` | No | `false` | Set to `true` for create/update/delete/move |
 
 All output is JSON to stdout, errors to stderr. See the [CLI Reference](./CLI.md) for full documentation.
 
